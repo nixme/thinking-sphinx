@@ -80,7 +80,7 @@ module ThinkingSphinx
       
       where_clause = ""
       if self.delta?
-        where_clause << "#{@model.quoted_table_name}.#{quote_column('delta')}" +" = #{options[:delta] ? 1 : 0}"
+        where_clause << "#{@model.quoted_table_name}.#{quote_column('delta')}" +" = #{options[:delta] ? db_boolean(true) : db_boolean(false)}"
       end
       unless @conditions.empty?
         where_clause << (where_clause.blank? ? "" : " AND ") << @conditions.join(" AND ")
@@ -105,7 +105,7 @@ FROM #{ @model.table_name }
       end
 
       sql += <<-SQL
-GROUP BY #{ (
+ GROUP BY #{ (
   ["#{@model.quoted_table_name}.#{quote_column(@model.primary_key)}"] + 
   @fields.collect { |field| field.to_group_sql }.compact +
   @attributes.collect { |attribute| attribute.to_group_sql }.compact
@@ -136,7 +136,7 @@ GROUP BY #{ (
             "MAX(#{quote_column(@model.primary_key)}) " +
             "FROM #{@model.quoted_table_name} "
       sql << "WHERE #{@model.quoted_table_name}.#{quote_column('delta')} " + 
-            "= #{options[:delta] ? 1 : 0}" if self.delta?
+            "= #{options[:delta] ? db_boolean(true) : db_boolean(false)}" if self.delta?
       sql
     end
     
@@ -145,7 +145,7 @@ GROUP BY #{ (
     # back to 0.
     #
     def to_sql_query_pre
-      self.delta? ? "UPDATE #{@model.quoted_table_name} SET #{quote_column('delta')} = 0" : ""
+      self.delta? ? "UPDATE #{@model.quoted_table_name} SET #{quote_column('delta')} = #{db_boolean(false)}" : ""
     end
     
     # Flag to indicate whether this index has a corresponding delta index.
@@ -184,6 +184,11 @@ GROUP BY #{ (
       
       builder.instance_eval &block
       
+      unless @model.descends_from_active_record?
+        stored_class = @model.store_full_sti_class ? @model.name : @model.name.demodulize
+        builder.where("#{@model.inheritance_column} = '#{stored_class}'")
+      end
+
       @fields     = builder.fields
       @attributes = builder.attributes
       @conditions = builder.conditions
@@ -242,6 +247,17 @@ GROUP BY #{ (
     # 
     def association(key)
       @associations[key] ||= Association.children(@model, key)
+    end
+
+    # Returns the proper boolean value string literal for the
+    # current database adapter.
+    #
+    def db_boolean(val)
+      if adapter == :postgres
+        val ? 'TRUE' : 'FALSE'
+      else
+        val ? '1' : '0'
+      end
     end
   end
 end
