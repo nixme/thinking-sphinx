@@ -18,13 +18,14 @@ module ThinkingSphinx
   # charset type::     utf-8
   # charset table::    nil
   # ignore chars::     nil
+  # ranged queries::   true
   #
   # If you want to change these settings, create a YAML file at
   # config/sphinx.yml with settings for each environment, in a similar
   # fashion to database.yml - using the following keys: config_file,
   # searchd_log_file, query_log_file, pid_file, searchd_file_path, port,
   # allow_star, mem_limit, max_matches, morphology, charset_type,
-  # charset_table, ignore_chars. I think you've got the idea.
+  # charset_table, ignore_chars, ranged_queries. I think you've got the idea.
   # 
   # Each setting in the YAML file is optional - so only put in the ones you
   # want to change.
@@ -37,7 +38,7 @@ module ThinkingSphinx
     attr_accessor :config_file, :searchd_log_file, :query_log_file,
       :pid_file, :searchd_file_path, :address, :port, :allow_star, :mem_limit,
       :max_matches, :morphology, :charset_type, :charset_table, :ignore_chars,
-      :app_root
+      :app_root, :ranged_queries
     
     attr_reader :environment
     
@@ -62,6 +63,7 @@ module ThinkingSphinx
       self.charset_type      = "utf-8"
       self.charset_table     = nil
       self.ignore_chars      = nil
+      self.ranged_queries    = true
       
       parse_config
     end
@@ -143,8 +145,8 @@ source #{model.name.downcase}_#{i}_core
 
   sql_query_pre    = #{charset_type == "utf-8" && adapter == "mysql" ? "SET NAMES utf8" : ""}
   sql_query_pre    = #{index.to_sql_query_pre}
-  sql_query        = #{index.to_sql.gsub(/\n/, ' ')}
-  sql_query_range  = #{index.to_sql_query_range}
+  sql_query        = #{index.to_sql(:ranged => self.ranged_queries).gsub(/\n/, ' ')}
+  sql_query_range  = #{self.ranged_queries ? index.to_sql_query_range : ""}
   sql_query_info   = #{index.to_sql_query_info}
   #{attr_sources}
 }
@@ -156,8 +158,8 @@ source #{model.name.downcase}_#{i}_core
 source #{model.name.downcase}_#{i}_delta : #{model.name.downcase}_#{i}_core
 {
   sql_query_pre    = #{charset_type == "utf-8" && adapter == "mysql" ? "SET NAMES utf8" : ""}
-  sql_query        = #{index.to_sql(:delta => true).gsub(/\n/, ' ')}
-  sql_query_range  = #{index.to_sql_query_range :delta => true}
+  sql_query        = #{index.to_sql(:ranged => self.ranged_queries, :delta => true).gsub(/\n/, ' ')}
+  sql_query_range  = #{self.ranged_queries ? index.to_sql_query_range(:delta => true) : ""}
 }
               SOURCE
             end

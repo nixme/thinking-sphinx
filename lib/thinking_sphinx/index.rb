@@ -80,10 +80,10 @@ module ThinkingSphinx
       
       where_clause = ""
       if self.delta?
-        where_clause << " AND #{@model.quoted_table_name}.#{quote_column('delta')}" +" = #{options[:delta] ? 1 : 0}"
+        where_clause << "#{@model.quoted_table_name}.#{quote_column('delta')}" +" = #{options[:delta] ? 1 : 0}"
       end
       unless @conditions.empty?
-        where_clause << " AND " << @conditions.join(" AND ")
+        where_clause << (where_clause.blank? ? "" : " AND ") << @conditions.join(" AND ")
       end
       
       sql = <<-SQL
@@ -94,9 +94,17 @@ SELECT #{ (
 ).join(", ") }
 FROM #{ @model.table_name }
   #{ assocs.collect { |assoc| assoc.to_sql }.join(' ') }
-WHERE #{@model.quoted_table_name}.#{quote_column(@model.primary_key)} >= $start
-  AND #{@model.quoted_table_name}.#{quote_column(@model.primary_key)} <= $end
-  #{ where_clause }
+      SQL
+
+      if options[:ranged] || !where_clause.blank?
+        sql += "WHERE "
+        sql += where_clause if !where_clause.blank?
+        sql += " AND "      if !where_clause.blank? && options[:ranged]
+        sql += "#{@model.quoted_table_name}.#{quote_column(@model.primary_key)} >= $start
+          AND #{@model.quoted_table_name}.#{quote_column(@model.primary_key)} <= $end" if options[:ranged]
+      end
+
+      sql += <<-SQL
 GROUP BY #{ (
   ["#{@model.quoted_table_name}.#{quote_column(@model.primary_key)}"] + 
   @fields.collect { |field| field.to_group_sql }.compact +
