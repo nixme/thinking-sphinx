@@ -14,8 +14,8 @@ module ThinkingSphinx
   # address::               0.0.0.0 (all)
   # port::                  3312
   # allow star::            false
-  # min prefix length::     1
-  # min infix length::      1
+  # min prefix length::     0
+  # min infix length::      0
   # mem limit::             64M
   # max matches::           1000
   # morphology::            stem_en
@@ -66,8 +66,8 @@ module ThinkingSphinx
       self.address              = "0.0.0.0"
       self.port                 = 3312
       self.allow_star           = false
-      self.min_prefix_len       = 1
-      self.min_infix_len        = 1
+      self.min_prefix_len       = 0
+      self.min_infix_len        = 0
       self.mem_limit            = "64M"
       self.max_matches          = 1000
       self.morphology           = "stem_en"
@@ -208,11 +208,9 @@ INDEX
       output += "  charset_table  = #{self.charset_table}\n" unless self.charset_table.nil?
       output += "  ignore_chars   = #{self.ignore_chars}\n"  unless self.ignore_chars.nil?
       
-      if self.allow_star
-        output += "  enable_star    = 1\n"
-        output += "  min_prefix_len = #{self.min_prefix_len}\n"
-        output += "  min_infix_len  = #{self.min_infix_len}\n"
-      end
+      output += "  min_prefix_len = #{self.min_prefix_len}\n" if self.min_prefix_len > 0
+      output += "  min_infix_len  = #{self.min_infix_len}\n"  if self.min_infix_len > 0
+      output += "  enable_star    = 1\n"                      if self.allow_star
       
       output += "  html_strip     = 1\n" if self.html_strip
       output += "  html_remove_elements = #{self.html_remove_elements}\n" unless self.html_remove_elements.blank?
