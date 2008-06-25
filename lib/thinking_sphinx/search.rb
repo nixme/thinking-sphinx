@@ -15,9 +15,12 @@ module ThinkingSphinx
       def search_for_ids(*args)
         results, client = search_results(*args.clone)
         
+        options = args.extract_options!
+        page    = options[:page] ? options[:page].to_i : 1
+        
         begin
           pager = WillPaginate::Collection.new(page,
-            client.limit, results[:total])
+            client.limit, results[:total] || 0)
           pager.replace results[:matches].collect { |match| match[:doc] }
         rescue
           results[:matches].collect { |match| match[:doc] }
@@ -136,7 +139,8 @@ module ThinkingSphinx
       # you can do so in your model:
       #
       #   define_index do
-      #     # ...
+      #     has :latit  # Float column, stored in radians
+      #     has :longit # Float column, stored in radians
       #     
       #     set_property :latitude_attr   => "latit"
       #     set_property :longitude_attr  => "longit"
@@ -145,12 +149,18 @@ module ThinkingSphinx
       # Now, geo-location searching really only has an affect if you have a
       # filter, sort or grouping clause related to it - otherwise it's just a
       # normal search. To make use of the positioning difference, use the
-      # special attribute "@geo" in any of your filters or sorting or grouping
+      # special attribute "@geodist" in any of your filters or sorting or grouping
       # clauses.
       # 
       # And don't forget - both the latitude and longitude you use in your
-      # search, and the values in your indexes, need to be stored in radians,
-      # _not_ degrees.
+      # search, and the values in your indexes, need to be stored as a float in radians,
+      # _not_ degrees. Keep in mind that if you do this conversion in SQL
+      # you will need to explicitly declare a column type of :float.
+      #
+      #   define_index do
+      #     has 'RADIANS(lat)', :as => :lat,  :type => :float
+      #     # ...
+      #   end
       # 
       def search(*args)
         results, client = search_results(*args.clone)
@@ -169,6 +179,35 @@ module ThinkingSphinx
           pager.replace instances_from_results(results[:matches], options, klass)
         rescue StandardError => err
           instances_from_results(results[:matches], options, klass)
+        end
+      end
+      
+      # Checks if a document with the given id exists within a specific index.
+      # Expected parameters:
+      #
+      # - ID of the document
+      # - Index to check within
+      # - Options hash (defaults to {})
+      # 
+      # Example:
+      # 
+      #   ThinkingSphinx::Search.search_for_id(10, "user_core", :class => User)
+      # 
+      def search_for_id(*args)
+        options = args.extract_options!
+        client  = client_from_options options
+        
+        query, filters    = search_conditions(
+          options[:class], options[:conditions] || {}
+        )
+        client.filters   += filters
+        client.match_mode = :extended unless query.empty?
+        client.id_range   = args.first..args.first
+        
+        begin
+          return client.query(query, args[1])[:matches].length > 0
+        rescue Errno::ECONNREFUSED => err
+          raise ThinkingSphinx::ConnectionError, "Connection to Sphinx Daemon (searchd) failed."
         end
       end
       
@@ -268,6 +307,9 @@ module ThinkingSphinx
         
         client.anchor = anchor_conditions(klass, options) || {} if client.anchor.empty?
         
+        client.filters << Riddle::Client::Filter.new(
+          "sphinx_deleted", [0]
+        )
         # class filters
         client.filters << Riddle::Client::Filter.new(
           "class_crc", options[:classes].collect { |klass| klass.to_crc32 }

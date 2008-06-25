@@ -27,6 +27,10 @@ module ThinkingSphinx
             end
           end
           
+          def after_commit
+            # Deliberately blank.
+          end
+          
           # Normal boolean save wrapped in a handler for the after_commit
           # callback.
           # 
@@ -75,7 +79,7 @@ module ThinkingSphinx
             end
             
             configuration = ThinkingSphinx::Configuration.new
-            system "indexer --config #{configuration.config_file} --rotate #{self.class.name.downcase}_delta"
+            system "indexer --config #{configuration.config_file} --rotate #{self.class.indexes.first.name}_delta"
             
             true
           end

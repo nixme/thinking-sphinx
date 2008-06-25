@@ -37,6 +37,64 @@ module ThinkingSphinx
       initialize_from_builder(&block) if block_given?
     end
     
+    def name
+      model.name.underscore.tr(':/\\', '_')
+    end
+    
+    def to_config(index, database_conf, charset_type)
+      # Set up associations and joins
+      link!
+      
+      attr_sources = attributes.collect { |attrib|
+        attrib.to_sphinx_clause
+      }.join("\n  ")
+      
+      db_adapter = case adapter
+      when :postgres
+        "pgsql"
+      when :mysql
+        "mysql"
+      else
+        raise "Unsupported Database Adapter: Sphinx only supports MySQL and PosgreSQL"
+      end
+      
+      config = <<-SOURCE
+
+source #{model.indexes.first.name}_#{index}_core
+{
+type     = #{db_adapter}
+sql_host = #{database_conf[:host] || "localhost"}
+sql_user = #{database_conf[:username]}
+sql_pass = #{database_conf[:password]}
+sql_db   = #{database_conf[:database]}
+
+sql_query_pre    = #{charset_type == "utf-8" && adapter == :mysql ? "SET NAMES utf8" : ""}
+#{"sql_query_pre    = SET SESSION group_concat_max_len = #{@options[:group_concat_max_len]}" if @options[:group_concat_max_len]}
+sql_query_pre    = #{to_sql_query_pre}
+sql_query        = #{to_sql.gsub(/\n/, ' ')}
+sql_query_range  = #{to_sql_query_range}
+sql_query_info   = #{to_sql_query_info}
+#{attr_sources}
+}
+      SOURCE
+      
+      if delta?
+        config += <<-SOURCE
+
+source #{model.indexes.first.name}_#{index}_delta : #{model.indexes.first.name}_#{index}_core
+{
+sql_query_pre    = 
+sql_query_pre    = #{charset_type == "utf-8" && adapter == :mysql ? "SET NAMES utf8" : ""}
+#{"sql_query_pre    = SET SESSION group_concat_max_len = #{@options[:group_concat_max_len]}" if @options[:group_concat_max_len]}
+sql_query        = #{to_sql(:delta => true).gsub(/\n/, ' ')}
+sql_query_range  = #{to_sql_query_range :delta => true}
+}
+        SOURCE
+      end
+      
+      config
+    end
+    
     # Link all the fields and associations to their corresponding
     # associations and joins. This _must_ be called before interrogating
     # the index's fields and associations for anything that may reference
@@ -80,10 +138,10 @@ module ThinkingSphinx
       
       where_clause = ""
       if self.delta?
-        where_clause << "#{@model.quoted_table_name}.#{quote_column('delta')}" +" = #{options[:delta] ? db_boolean(true) : db_boolean(false)}"
+        where_clause << " AND #{@model.quoted_table_name}.#{quote_column('delta')}" +" = #{options[:delta] ? db_boolean(true) : db_boolean(false)}"
       end
       unless @conditions.empty?
-        where_clause << (where_clause.blank? ? "" : " AND ") << @conditions.join(" AND ")
+        where_clause << " AND " << @conditions.join(" AND ")
       end
       
       sql = <<-SQL
@@ -94,18 +152,10 @@ SELECT #{ (
 ).join(", ") }
 FROM #{ @model.table_name }
   #{ assocs.collect { |assoc| assoc.to_sql }.join(' ') }
-      SQL
-
-      if options[:ranged] || !where_clause.blank?
-        sql += "WHERE "
-        sql += where_clause if !where_clause.blank?
-        sql += " AND "      if !where_clause.blank? && options[:ranged]
-        sql += "#{@model.quoted_table_name}.#{quote_column(@model.primary_key)} >= $start
-          AND #{@model.quoted_table_name}.#{quote_column(@model.primary_key)} <= $end" if options[:ranged]
-      end
-
-      sql += <<-SQL
- GROUP BY #{ (
+WHERE #{@model.quoted_table_name}.#{quote_column(@model.primary_key)} >= $start
+  AND #{@model.quoted_table_name}.#{quote_column(@model.primary_key)} <= $end
+  #{ where_clause }
+GROUP BY #{ (
   ["#{@model.quoted_table_name}.#{quote_column(@model.primary_key)}"] + 
   @fields.collect { |field| field.to_group_sql }.compact +
   @attributes.collect { |attribute| attribute.to_group_sql }.compact
@@ -132,8 +182,16 @@ FROM #{ @model.table_name }
     # so pass in :delta => true to get the delta version of the SQL.
     # 
     def to_sql_query_range(options={})
-      sql = "SELECT MIN(#{quote_column(@model.primary_key)}), " +
-            "MAX(#{quote_column(@model.primary_key)}) " +
+      min_statement = "MIN(#{quote_column(@model.primary_key)})"
+      max_statement = "MAX(#{quote_column(@model.primary_key)})"
+      
+      # Fix to handle Sphinx PostgreSQL bug (it doesn't like NULLs or 0's)
+      if adapter == :postgres
+        min_statement = "COALESCE(#{min_statement}, 1)"
+        max_statement = "COALESCE(#{max_statement}, 1)"
+      end
+      
+      sql = "SELECT #{min_statement}, #{max_statement} " +
             "FROM #{@model.quoted_table_name} "
       sql << "WHERE #{@model.quoted_table_name}.#{quote_column('delta')} " + 
             "= #{options[:delta] ? db_boolean(true) : db_boolean(false)}" if self.delta?
@@ -163,6 +221,14 @@ FROM #{ @model.table_name }
       else
         raise "Invalid Database Adapter: Sphinx only supports MySQL and PostgreSQL"
       end
+    end
+    
+    def prefix_fields
+      @fields.select { |field| field.prefixes }
+    end
+    
+    def infix_fields
+      @fields.select { |field| field.infixes }
     end
     
     private
@@ -199,6 +265,11 @@ FROM #{ @model.table_name }
         FauxColumn.new(@model.to_crc32.to_s),
         :type => :integer,
         :as   => :class_crc
+      )
+      @attributes << Attribute.new(
+        FauxColumn.new("0"),
+        :type => :integer,
+        :as   => :sphinx_deleted
       )
     end
     

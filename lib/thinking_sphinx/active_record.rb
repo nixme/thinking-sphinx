@@ -78,6 +78,8 @@ module ThinkingSphinx
               after_commit  :index_delta
             end
             
+            after_destroy :toggle_deleted
+            
             index
           end
           alias_method :sphinx_index, :define_index
@@ -110,6 +112,27 @@ module ThinkingSphinx
       ::ActiveRecord::Associations::HasManyThroughAssociation.send(
         :include, ThinkingSphinx::ActiveRecord::HasManyAssociation
       )
+    end
+    
+    def in_core_index?
+      @in_core_index ||= self.class.search_for_id(self.id, "#{self.class.name.downcase}_core")
+    end
+    
+    def toggle_deleted
+      config = ThinkingSphinx::Configuration.new
+      client = Riddle::Client.new config.address, config.port
+      
+      client.update(
+        "#{self.class.indexes.first.name}_core",
+        ['sphinx_deleted'],
+        {self.id => 1}
+      ) if self.in_core_index?
+      
+      client.update(
+        "#{self.class.indexes.first.name}_delta",
+        ['sphinx_deleted'],
+        {self.id => 1}
+      ) if self.class.indexes.any? { |index| index.delta? } && self.delta?
     end
   end
 end
